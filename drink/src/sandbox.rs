@@ -1,6 +1,7 @@
 //! A sandboxed runtime.
 
 mod sandbox_config;
+use frame_support::sp_runtime::testing::H256;
 pub use sandbox_config::SandboxConfig;
 pub mod balance_api;
 pub mod contracts_api;
@@ -12,6 +13,18 @@ use std::any::Any;
 
 use sp_externalities::Extension;
 use sp_io::TestExternalities;
+
+/// A snapshot of the storage.
+#[derive(Clone, Debug)]
+pub struct Snapshot {
+    /// The storage raw key-value pairs.
+    storage: RawStorage,
+    /// The storage root hash.
+    storage_root: StorageRoot,
+}
+
+type RawStorage = Vec<(Vec<u8>, (Vec<u8>, i32))>;
+type StorageRoot = H256;
 
 /// A sandboxed runtime.
 pub struct Sandbox<Config> {
@@ -52,5 +65,30 @@ impl<Config> Sandbox<Config> {
     /// Registers an extension.
     pub fn register_extension<E: Any + Extension>(&mut self, ext: E) {
         self.externalities.register_extension(ext);
+    }
+
+    /// Take a snapshot of the storage.
+    pub fn take_snapshot(&mut self) -> Snapshot {
+        let mut backend = self.externalities.as_backend().clone();
+        let raw_key_values = backend
+            .backend_storage_mut()
+            .drain()
+            .into_iter()
+            .filter(|(_, (_, r))| *r > 0)
+            .collect::<Vec<(Vec<u8>, (Vec<u8>, i32))>>();
+        let root = backend.root().to_owned();
+        Snapshot {
+            storage: raw_key_values,
+            storage_root: root,
+        }
+    }
+
+    /// Restore the storage from the given snapshot.
+    pub fn restore_snapshot(&mut self, snapshot: Snapshot) {
+        self.externalities = TestExternalities::from_raw_snapshot(
+            snapshot.storage,
+            snapshot.storage_root,
+            Default::default(),
+        );
     }
 }
